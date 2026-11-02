@@ -18,11 +18,17 @@ import {
   FileText,
   AlertCircle,
   RotateCcw,
+  Wand2,
+  ListChecks,
+  ArrowRight,
 } from 'lucide-react';
-import { PageChunk, getPageParagraphs } from '../utils/chunker';
+import {
+  PageChunk,
+  getPageParagraphs,
+  formatPageAsBracketedSingleParagraph,
+} from '../utils/chunker';
 import {
   cleanKhmerPunctuation,
-  formatAsContinuousStoryText,
   extractActiveParagraphIndex,
   extractActiveSrtCueId,
   toKhmerNumerals,
@@ -32,7 +38,7 @@ import { SrtCue, buildSrt } from '../utils/srtParser';
 import { SrtSideBySideStudio } from './SrtSideBySideStudio';
 import { NonKhmerInspector } from './NonKhmerInspector';
 import { extractNonKhmerWords } from '../utils/nonKhmerDetector';
-import { Languages } from 'lucide-react';
+import { Languages, Hash } from 'lucide-react';
 
 interface TranslationReaderProps {
   page: PageChunk;
@@ -42,6 +48,7 @@ interface TranslationReaderProps {
   liveCharsReceived: number;
   liveKhmerChars: number;
   translationSpeed: number; // chars per second
+  retryStatusMsg?: string | null;
   onCopyAll: () => void;
   onDownloadAll: () => void;
   storyTitle: string;
@@ -49,6 +56,12 @@ interface TranslationReaderProps {
   onUpdateCue?: (cueId: number, newKhmerText: string) => void;
   allSrtCues?: SrtCue[];
   onTranslateCurrentPage?: () => void;
+  onFixCurrentPage?: () => void;
+  onFixAllSpellingAndForeign?: () => void;
+  isFixingSpellingAndForeign?: boolean;
+  onConvertAllNumbersToWords?: () => void;
+  onOpenCorrectionReport?: () => void;
+  activeAiEngine?: string;
 }
 
 export const TranslationReader: React.FC<TranslationReaderProps> = React.memo(({
@@ -59,6 +72,7 @@ export const TranslationReader: React.FC<TranslationReaderProps> = React.memo(({
   liveCharsReceived,
   liveKhmerChars,
   translationSpeed,
+  retryStatusMsg = null,
   onCopyAll,
   onDownloadAll,
   storyTitle,
@@ -66,6 +80,12 @@ export const TranslationReader: React.FC<TranslationReaderProps> = React.memo(({
   onUpdateCue,
   allSrtCues = [],
   onTranslateCurrentPage,
+  onFixCurrentPage,
+  onFixAllSpellingAndForeign,
+  isFixingSpellingAndForeign = false,
+  onConvertAllNumbersToWords,
+  onOpenCorrectionReport,
+  activeAiEngine = '🌐 Auto Multi-AI',
 }) => {
   const isSrtPage = Boolean(page.isSrtChunk || (page.srtCues && page.srtCues.length > 0) || allSrtCues.length > 0);
   const [srtScope, setSrtScope] = useState<'all' | 'page'>('all');
@@ -105,19 +125,10 @@ export const TranslationReader: React.FC<TranslationReaderProps> = React.memo(({
     [isTranslating, page.translatedText]
   );
 
-  // Formats pure Khmer text as continuous, flowing story paragraphs ("អក្សរមកជាប់គ្នាជាអត្តបទធម្មតាមកស្រួលមើល")
+  // Formats pure Khmer text as a single continuous paragraph with zero [1] [2] line numbers
   const continuousKhmerText = useMemo(() => {
-    // If page has srtCues with translatedText
-    if (page.srtCues && page.srtCues.some((c) => c.translatedText && c.translatedText.trim().length > 0)) {
-      const cueLines = page.srtCues
-        .map((c) => (c.translatedText || '').trim())
-        .filter((t) => t.length > 0);
-      if (cueLines.length > 0) {
-        return formatAsContinuousStoryText(cueLines.join('\n'));
-      }
-    }
-    return formatAsContinuousStoryText(page.translatedText);
-  }, [page.translatedText, page.srtCues]);
+    return formatPageAsBracketedSingleParagraph(page, 0).text;
+  }, [page]);
 
   // Clean raw Khmer text for count or fallback
   const cleanedKhmerText = useMemo(
@@ -227,7 +238,6 @@ export const TranslationReader: React.FC<TranslationReaderProps> = React.memo(({
 
   const handleSpeechToggle = () => {
     if (!('speechSynthesis' in window)) {
-      alert('កម្មវិធីរុករករបស់អ្នកមិនគាំទ្រ Text-to-Speech ឡើយ');
       return;
     }
 
@@ -364,13 +374,15 @@ export const TranslationReader: React.FC<TranslationReaderProps> = React.memo(({
                 ? 'bg-amber-500 text-slate-950 font-bold shadow'
                 : 'text-amber-400/90 hover:text-amber-200'
             }`}
-            title="ផ្ទាំងបង្ហាញអក្សរដែលបកប្រែហើយ ដែលមិនមែនជាអក្សរខ្មែរ"
+            title="ផ្ទាំងបង្ហាញអក្សរដែលខុស និងអក្សរដែលកែរួចទាំងអស់"
           >
             <Languages className="w-3.5 h-3.5" />
-            <span>អក្សរមិនមែនខ្មែរ</span>
-            {nonKhmerCount > 0 && (
+            <span>អក្សរខុស & កែរួច</span>
+            {(nonKhmerCount > 0 || (page.corrections && page.corrections.length > 0)) && (
               <span className="ml-1 text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                {toKhmerNumerals(nonKhmerCount)}
+                {toKhmerNumerals(
+                  nonKhmerCount > 0 ? nonKhmerCount : page.corrections?.length || 0
+                )}
               </span>
             )}
           </button>
@@ -467,8 +479,59 @@ export const TranslationReader: React.FC<TranslationReaderProps> = React.memo(({
           </div>
         </div>
 
-        {/* Right: Audio Read Aloud & Copy/Export */}
-        <div className="flex items-center gap-2">
+        {/* Right: Audio Read Aloud & Copy/Export & Fix Spelling/Foreign & Convert Numbers */}
+        <div className="flex flex-wrap items-center gap-2">
+          {onFixCurrentPage && (
+            <button
+              type="button"
+              onClick={onFixCurrentPage}
+              disabled={isTranslating || isFixingSpellingAndForeign}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-khmer font-bold text-xs shadow-md shadow-amber-500/20 active:scale-95 transition-all disabled:opacity-40"
+              title="ជួសជុលអក្ខរាវិរុទ្ធ និងអក្សរច្រឡំភាសាក្នុងទំព័រនេះ រួចបង្ហាញបញ្ជីអក្សរខុស & កែរួចទាំងអស់"
+            >
+              <Wand2 className={`w-3.5 h-3.5 ${isFixingSpellingAndForeign ? 'animate-spin' : ''}`} />
+              <span>ជួសជុលទំព័រនេះ & បង្ហាញកំណែ</span>
+            </button>
+          )}
+          {onFixAllSpellingAndForeign && (
+            <button
+              type="button"
+              onClick={onFixAllSpellingAndForeign}
+              disabled={isTranslating || isFixingSpellingAndForeign}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-khmer font-bold text-xs shadow-md shadow-emerald-500/20 active:scale-95 transition-all disabled:opacity-40"
+              title="ប្រើ AI កម្រិតខ្ពស់ ត្រួតពិនិត្យនិងកែសម្រួលអក្ខរាវិរុទ្ធគ្រប់ទំព័រទាំងអស់ លុបលើសស្រៈ និងជួសជុលអក្សរចម្លែកៗ"
+            >
+              <Wand2 className={`w-3.5 h-3.5 ${isFixingSpellingAndForeign ? 'animate-spin' : ''}`} />
+              <span>
+                {isFixingSpellingAndForeign
+                  ? 'កំពុងត្រួតពិនិត្យដោយ AI...'
+                  : 'កែសម្រួលអក្ខរាវិរុទ្ធទាំងអស់'}
+              </span>
+            </button>
+          )}
+          {page.corrections && page.corrections.length > 0 && onOpenCorrectionReport && (
+            <button
+              type="button"
+              onClick={onOpenCorrectionReport}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 font-khmer font-bold text-xs shadow transition-all"
+              title="បើកមើលបញ្ជីអក្សរដែលខុស និងអក្សរដែលកែរួចទាំងអស់"
+            >
+              <ListChecks className="w-3.5 h-3.5 text-emerald-400" />
+              <span>មើលអក្សរខុស & កែរួច ({toKhmerNumerals(page.corrections.length)})</span>
+            </button>
+          )}
+          {onConvertAllNumbersToWords && (
+            <button
+              type="button"
+              onClick={onConvertAllNumbersToWords}
+              disabled={isTranslating || isFixingSpellingAndForeign}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 hover:from-violet-400 hover:to-fuchsia-400 text-white font-khmer font-bold text-xs shadow-md shadow-purple-500/20 active:scale-95 transition-all disabled:opacity-40"
+              title="បម្លែងគ្រប់តួលេខទាំងអស់ (០-៩ និង 0-9) ទៅជាពាក្យអក្សរខ្មែរសុទ្ធ"
+            >
+              <Hash className="w-3.5 h-3.5" />
+              <span>បម្លែងលេខទៅជាអក្សរទាំងអស់</span>
+            </button>
+          )}
           <button
             onClick={handleSpeechToggle}
             className={`p-2 rounded-xl border transition-all ${
@@ -550,8 +613,17 @@ export const TranslationReader: React.FC<TranslationReaderProps> = React.memo(({
           )}
         </div>
 
-        {/* Punctuation & Rule Badge */}
-        <div className="flex items-center gap-2">
+        {/* Punctuation, AI & Model, & Chuon Nath Dictionary Rule Badge */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            data-testid="reader-active-ai-badge"
+            className="text-[10.5px] px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-khmer font-bold"
+          >
+            🤖 {page.usedAiEngine ? `${page.usedAiEngine} • Model: ${page.usedAiModel}` : activeAiEngine}
+          </span>
+          <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-khmer font-bold">
+            📖 អក្ខរាវិរុទ្ធវចនានុក្រមសម្ដេចជួនណាត ១០០%
+          </span>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-amber-300 border border-slate-700 font-khmer">
             លេខខ្មែរសុទ្ធ • សញ្ញាវណ្ណយុត្តិ៖ «។» និង «?» តែប៉ុណ្ណោះ
           </span>
@@ -579,6 +651,56 @@ export const TranslationReader: React.FC<TranslationReaderProps> = React.memo(({
         </div>
       </div>
 
+      {/* Live Status / Post-Page Auto-Repair Banner */}
+      {retryStatusMsg && (
+        <div className="bg-emerald-950/70 border-b border-emerald-500/40 px-4 py-2 flex items-center justify-between gap-2 text-xs text-emerald-200 font-khmer">
+          <div className="flex items-center gap-2">
+            <RotateCcw className="w-3.5 h-3.5 text-emerald-400 animate-spin shrink-0" />
+            <span>{retryStatusMsg}</span>
+          </div>
+          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+            ប្រព័ន្ធ Multi-AI ឥតដែនកំណត់
+          </span>
+        </div>
+      )}
+
+      {/* Inline Before/After Correction Report Strip for Repaired Page */}
+      {page.corrections && page.corrections.length > 0 && (
+        <div className="bg-emerald-950/35 border-b border-emerald-500/30 px-4 py-3 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-khmer">
+            <div className="flex items-center gap-2 text-emerald-300 font-bold">
+              <ListChecks className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>
+                អក្សរដែលខុស និងអក្សរដែលកែរួចក្នុងទំព័រទី {toKhmerNumerals(pageIndex + 1)} ({toKhmerNumerals(page.corrections.length)} កន្លែង)៖
+              </span>
+            </div>
+            {onOpenCorrectionReport && (
+              <button
+                type="button"
+                onClick={onOpenCorrectionReport}
+                className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/40 font-bold text-[11px] transition-all"
+              >
+                បើកមើលតារាងពេញលេញទាំងអស់ →
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 max-h-28 overflow-y-auto pr-1">
+            {page.corrections.map((item, idx) => (
+              <div
+                key={item.id || idx}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900/90 border border-slate-700/80 text-xs font-khmer"
+              >
+                <span className="text-rose-300 font-bold line-through decoration-rose-500/70">
+                  {item.wrongText}
+                </span>
+                <ArrowRight className="w-3 h-3 text-emerald-400 shrink-0" />
+                <span className="text-emerald-300 font-bold">{item.fixedText}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Reader Content Area with Smooth Independent/Synced Scroll */}
       <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-800 h-[calc(100vh-270px)] min-h-[550px] relative">
         {/* Left Side: Original Text with Paragraph Tracking Highlight */}
@@ -592,61 +714,15 @@ export const TranslationReader: React.FC<TranslationReaderProps> = React.memo(({
             <div className="sticky top-0 z-10 pb-2 mb-3 bg-slate-950/95 backdrop-blur border-b border-slate-800 flex items-center justify-between">
               <span className="text-xs font-semibold text-slate-400 font-mono uppercase tracking-wider flex items-center gap-2">
                 <span>Original Story Text • Page {pageIndex + 1}</span>
-                <span className="text-[10px] text-slate-500 font-khmer">
-                  ({originalParagraphs.length} កថាខណ្ឌ)
-                </span>
               </span>
               <span className="text-[11px] text-slate-500 font-mono">
                 {page.charCount.toLocaleString()} chars
               </span>
             </div>
 
-            {/* Paragraph list with live tracking indicator */}
-            <div className="space-y-4">
-              {originalParagraphs.map((paraText, pIdx) => {
-                const isActive = isTranslating && activeParagraphIndex === pIdx;
-                const isCompleted = isTranslating && activeParagraphIndex > pIdx;
-
-                return (
-                  <div
-                    key={pIdx}
-                    ref={(el) => {
-                      if (el) paragraphRefs.current.set(pIdx, el);
-                      else paragraphRefs.current.delete(pIdx);
-                    }}
-                    className={`p-3.5 rounded-xl border text-sm leading-relaxed transition-all duration-300 relative ${
-                      isActive
-                        ? 'border-amber-400 bg-amber-500/10 shadow-lg shadow-amber-500/10 ring-2 ring-amber-400/40'
-                        : isCompleted
-                        ? 'border-emerald-500/30 bg-emerald-950/15 text-slate-300'
-                        : 'border-slate-800/80 bg-slate-900/40 text-slate-400'
-                    }`}
-                  >
-                    {/* Paragraph header badge */}
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
-                        #{pIdx + 1}
-                      </span>
-
-                      {isActive && (
-                        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-bold font-khmer animate-pulse shadow">
-                          <Navigation className="w-2.5 h-2.5" />
-                          <span>កំពុងបកប្រែកថាខណ្ឌនេះ...</span>
-                        </div>
-                      )}
-
-                      {isCompleted && (
-                        <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-khmer">
-                          <Check className="w-3 h-3" />
-                          <span>បកប្រែរួច</span>
-                        </span>
-                      )}
-                    </div>
-
-                    <p className="font-sans whitespace-pre-wrap">{paraText}</p>
-                  </div>
-                );
-              })}
+            {/* Unified whole-page original text (no sub-part splitting) */}
+            <div className="p-4 rounded-xl border border-slate-800/80 bg-slate-900/40 text-slate-300 text-sm leading-relaxed font-sans whitespace-pre-wrap">
+              {(page.originalText || '').replace(/^\[\s*P\d+\s*\]\s*/gm, '')}
             </div>
           </div>
         )}
@@ -897,6 +973,10 @@ export const TranslationReader: React.FC<TranslationReaderProps> = React.memo(({
             <NonKhmerInspector
               translatedText={page.translatedText}
               originalText={page.originalText}
+              corrections={page.corrections || []}
+              onFixCurrentPage={onFixCurrentPage}
+              onFixAllSpellingAndForeign={onFixAllSpellingAndForeign}
+              isFixingSpellingAndForeign={isFixingSpellingAndForeign}
             />
           </div>
         )}
@@ -909,9 +989,13 @@ export const TranslationReader: React.FC<TranslationReaderProps> = React.memo(({
           <span>រត់តាមដានកថាខណ្ឌកំពុងបកប្រែដោយស្វ័យប្រវត្តិ</span>
         </div>
         <div className="flex items-center gap-3">
-          <span>សញ្ញាវណ្ណយុត្តិស្អាត (តែ «។» និង «?»)</span>
+          <span>វចនានុក្រមសម្ដេចជួនណាត • សញ្ញាវណ្ណយុត្តិស្អាត (តែ «។» និង «?»)</span>
           <span className="text-slate-600">•</span>
-          <span className="font-mono text-slate-500">Gemini 3.8 Flash Streaming</span>
+          <span className="font-mono text-emerald-400">
+            {page.usedAiEngine
+              ? `${page.usedAiEngine} (${page.usedAiModel})`
+              : activeAiEngine}
+          </span>
         </div>
       </div>
     </div>

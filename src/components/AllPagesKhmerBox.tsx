@@ -10,13 +10,14 @@ import {
   ChevronUp,
   Film,
   Sparkles,
+  Wand2,
 } from 'lucide-react';
-import { PageChunk } from '../utils/chunker';
-import { cleanKhmerPunctuation, toKhmerNumerals } from '../utils/khmerCleaner';
+import { PageChunk, formatPagesAsBracketedSingleParagraph } from '../utils/chunker';
+import { toKhmerNumerals } from '../utils/khmerCleaner';
 import { buildSrt, SrtCue } from '../utils/srtParser';
 import { NonKhmerInspector } from './NonKhmerInspector';
 import { extractNonKhmerWords } from '../utils/nonKhmerDetector';
-import { Languages } from 'lucide-react';
+import { Languages, Hash } from 'lucide-react';
 
 interface AllPagesKhmerBoxProps {
   pages: PageChunk[];
@@ -24,6 +25,9 @@ interface AllPagesKhmerBoxProps {
   originalTitle?: string;
   isSrtMode?: boolean;
   allSrtCues?: SrtCue[];
+  onFixAllSpellingAndForeign?: () => void;
+  isFixingSpellingAndForeign?: boolean;
+  onConvertAllNumbersToWords?: () => void;
 }
 
 export const AllPagesKhmerBox: React.FC<AllPagesKhmerBoxProps> = React.memo(({
@@ -32,6 +36,9 @@ export const AllPagesKhmerBox: React.FC<AllPagesKhmerBoxProps> = React.memo(({
   originalTitle,
   isSrtMode = false,
   allSrtCues = [],
+  onFixAllSpellingAndForeign,
+  isFixingSpellingAndForeign = false,
+  onConvertAllNumbersToWords,
 }) => {
   const [copied, setCopied] = useState(false);
   const [copiedSrt, setCopiedSrt] = useState(false);
@@ -65,31 +72,21 @@ export const AllPagesKhmerBox: React.FC<AllPagesKhmerBoxProps> = React.memo(({
     return buildSrt(effectiveCues, true);
   }, [effectiveCues]);
 
-  // Memoize combined clean text so heavy regex parsing only runs when pages actually change
+  // Step 2 & Step 3: Format all translated pages into a single continuous paragraph starting strictly at [1]
+  // ("[1] អត្ថបទបកប្រែជួរទី១... [2] អត្ថបទបកប្រែជួរទី២... [3] អត្ថបទបកប្រែជួរទី៣...")
+  // Strictly ZERO character lists, ZERO titles, ZERO timestamps, ZERO parentheses ( ), and ZERO Thai characters!
   const { combinedText, totalKhmerChars } = useMemo(() => {
-    const textPieces: string[] = [];
-    let charsCount = 0;
-
-    for (let i = 0; i < pages.length; i++) {
-      const raw = pages[i].translatedText;
-      if (raw && raw.trim().length > 0) {
-        const cleaned = cleanKhmerPunctuation(raw);
-        if (cleaned.length > 0) {
-          textPieces.push(cleaned);
-          charsCount += cleaned.length;
-        }
-      }
-    }
-
+    const formatted = formatPagesAsBracketedSingleParagraph(pages);
     return {
-      combinedText: textPieces.join('\n\n'),
-      totalKhmerChars: charsCount,
+      combinedText: formatted,
+      totalKhmerChars: formatted.length,
     };
   }, [pages]);
 
   const combinedOriginalText = useMemo(() => {
+    if (activeTab !== 'non_khmer') return '';
     return pages.map((p) => p.originalText).filter(Boolean).join('\n\n');
-  }, [pages]);
+  }, [pages, activeTab]);
 
   const allNonKhmerWordsCount = useMemo(() => {
     return extractNonKhmerWords(combinedText).length;
@@ -189,6 +186,43 @@ export const AllPagesKhmerBox: React.FC<AllPagesKhmerBoxProps> = React.memo(({
                 <span>{copiedSrt ? 'បានចម្លង SRT!' : 'កុបពីទម្រង់ SRT'}</span>
               </button>
             </>
+          )}
+
+          {/* Fix All Spelling (AI High-Level) & Clean/Translate Foreign Text Button */}
+          {onFixAllSpellingAndForeign && (
+            <button
+              type="button"
+              onClick={onFixAllSpellingAndForeign}
+              disabled={totalKhmerChars === 0 || isFixingSpellingAndForeign}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-khmer font-bold text-xs sm:text-sm shadow-xl shadow-emerald-500/25 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+              title="ប្រើ AI កម្រិតខ្ពស់ ត្រួតពិនិត្យនិងកែសម្រួលអក្ខរាវិរុទ្ធទាំងអស់ លុបលើសស្រៈ និងជួសជុលអក្សរចម្លែកៗ (ដូចជា គ្នាอย่างรุนแรง)"
+            >
+              <Wand2 className={`w-4 h-4 stroke-[2.5] ${isFixingSpellingAndForeign ? 'animate-spin' : ''}`} />
+              <span>
+                {isFixingSpellingAndForeign
+                  ? 'កំពុងត្រួតពិនិត្យដោយ AI កម្រិតខ្ពស់...'
+                  : 'កែសម្រួលអក្ខរាវិរុទ្ធទាំងអស់ (AI កម្រិតខ្ពស់)'}
+              </span>
+              {allNonKhmerWordsCount > 0 && !isFixingSpellingAndForeign && (
+                <span className="px-1.5 py-0.5 rounded-full bg-slate-950/80 text-amber-300 font-mono text-[10px]">
+                  {toKhmerNumerals(allNonKhmerWordsCount)}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Convert All Numbers to Khmer Words Button */}
+          {onConvertAllNumbersToWords && (
+            <button
+              type="button"
+              onClick={onConvertAllNumbersToWords}
+              disabled={totalKhmerChars === 0 || isFixingSpellingAndForeign}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-violet-500 via-purple-500 to-fuchsia-500 hover:from-violet-400 hover:to-fuchsia-400 text-white font-khmer font-bold text-xs sm:text-sm shadow-xl shadow-purple-500/25 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+              title="បម្លែងគ្រប់តួលេខទាំងអស់ (០-៩ និង 0-9) ទៅជាពាក្យអក្សរខ្មែរសុទ្ធ (ឧ. ១០០ -> មួយរយ)"
+            >
+              <Hash className="w-4 h-4 stroke-[2.5]" />
+              <span>បម្លែងលេខទៅជាអក្សរទាំងអស់</span>
+            </button>
           )}
 
           {/* Copy All Pure Text Button */}
@@ -350,6 +384,8 @@ export const AllPagesKhmerBox: React.FC<AllPagesKhmerBoxProps> = React.memo(({
             <NonKhmerInspector
               translatedText={combinedText}
               originalText={combinedOriginalText}
+              onFixAllSpellingAndForeign={onFixAllSpellingAndForeign}
+              isFixingSpellingAndForeign={isFixingSpellingAndForeign}
             />
           ) : (
             <div className="relative">

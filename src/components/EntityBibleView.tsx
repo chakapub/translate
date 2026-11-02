@@ -5,13 +5,8 @@ import {
   Shield,
   Plus,
   Trash2,
-  Edit2,
   Check,
-  Sparkles,
   ArrowRight,
-  BookOpen,
-  HelpCircle,
-  FileText,
 } from 'lucide-react';
 import { StoryAnalysis, CharacterEntity, LocationEntity, TermEntity } from '../types';
 
@@ -52,12 +47,15 @@ export const EntityBibleView: React.FC<EntityBibleViewProps> = ({
   const [newTermCategory, setNewTermCategory] = useState('');
   const [isAddingTerm, setIsAddingTerm] = useState(false);
 
+  const sanitizeKhmerInput = (val: string) =>
+    (val || '').replace(/[\u0E00-\u0E7F]+/g, '').replace(/[()（）]/g, '').trim();
+
   const handleAddCharacter = () => {
     if (!newCharOriginal.trim() || !newCharKhmer.trim()) return;
     const newChar: CharacterEntity = {
-      originalName: newCharOriginal.trim(),
-      khmerName: newCharKhmer.trim(),
-      role: newCharRole.trim() || 'តួអង្គ',
+      originalName: newCharOriginal.replace(/[()（）]/g, '').trim(),
+      khmerName: sanitizeKhmerInput(newCharKhmer),
+      role: sanitizeKhmerInput(newCharRole) || 'តួអង្គ',
     };
     setAnalysis((prev) => (prev ? { ...prev, characters: [...prev.characters, newChar] } : null));
     setNewCharOriginal('');
@@ -76,7 +74,13 @@ export const EntityBibleView: React.FC<EntityBibleViewProps> = ({
     setAnalysis((prev) => {
       if (!prev) return null;
       const updated = [...prev.characters];
-      updated[index] = { ...updated[index], [field]: value };
+      updated[index] = {
+        ...updated[index],
+        [field]:
+          field === 'khmerName'
+            ? value.replace(/[\u0E00-\u0E7F()（）]/g, '')
+            : value.replace(/[()（）]/g, ''),
+      };
       return { ...prev, characters: updated };
     });
   };
@@ -84,9 +88,9 @@ export const EntityBibleView: React.FC<EntityBibleViewProps> = ({
   const handleAddLocation = () => {
     if (!newLocOriginal.trim() || !newLocKhmer.trim()) return;
     const newLoc: LocationEntity = {
-      originalName: newLocOriginal.trim(),
-      khmerName: newLocKhmer.trim(),
-      description: newLocDesc.trim(),
+      originalName: newLocOriginal.replace(/[()（）]/g, '').trim(),
+      khmerName: sanitizeKhmerInput(newLocKhmer),
+      description: sanitizeKhmerInput(newLocDesc),
     };
     setAnalysis((prev) => (prev ? { ...prev, locations: [...prev.locations, newLoc] } : null));
     setNewLocOriginal('');
@@ -104,9 +108,9 @@ export const EntityBibleView: React.FC<EntityBibleViewProps> = ({
   const handleAddTerm = () => {
     if (!newTermOriginal.trim() || !newTermKhmer.trim()) return;
     const newTerm: TermEntity = {
-      originalName: newTermOriginal.trim(),
-      khmerName: newTermKhmer.trim(),
-      category: newTermCategory.trim() || 'វត្ថុ/ពាក្យគន្លឹះ',
+      originalName: newTermOriginal.replace(/[()（）]/g, '').trim(),
+      khmerName: sanitizeKhmerInput(newTermKhmer),
+      category: sanitizeKhmerInput(newTermCategory) || 'វត្ថុ/ថាមពល/កម្រិត',
     };
     setAnalysis((prev) => (prev ? { ...prev, terms: [...prev.terms, newTerm] } : null));
     setNewTermOriginal('');
@@ -123,6 +127,40 @@ export const EntityBibleView: React.FC<EntityBibleViewProps> = ({
 
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 sm:p-7 shadow-xl space-y-6">
+      {/* Step 1: 3-Line Scanned Entity Block (បង្ហាញតែក្នុងផ្ទាំង Chat ហាមដាក់ចូលក្នុងឯកសារ .txt) */}
+      <div className="bg-slate-950/95 border border-amber-500/40 rounded-2xl p-4 shadow-lg space-y-1.5 font-khmer text-xs sm:text-sm select-text">
+        <div className="text-[11px] font-bold text-amber-400 mb-1">
+          ជំហានទី ១៖ ស្កេនឈ្មោះដាក់តគ្នាត្រឹម ៣ ជួរ — បង្ហាញតែក្នុងផ្ទាំង Chat ហាមដាក់ចូលក្នុងឯកសារ .txt
+        </div>
+        <div className="text-slate-100 leading-relaxed">
+          <span className="font-bold text-amber-300">- តួអង្គ៖ </span>
+          <span>
+            {(analysis.characters || [])
+              .map((c) => sanitizeKhmerInput(c.khmerName))
+              .filter(Boolean)
+              .join(' | ') || 'គ្មាន'}
+          </span>
+        </div>
+        <div className="text-slate-100 leading-relaxed">
+          <span className="font-bold text-emerald-300">- ទីកន្លែង/និកាយ៖ </span>
+          <span>
+            {(analysis.locations || [])
+              .map((l) => sanitizeKhmerInput(l.khmerName))
+              .filter(Boolean)
+              .join(' | ') || 'គ្មាន'}
+          </span>
+        </div>
+        <div className="text-slate-100 leading-relaxed">
+          <span className="font-bold text-sky-300">- វត្ថុ/ថាមពល/កម្រិត៖ </span>
+          <span>
+            {(analysis.terms || [])
+              .map((t) => sanitizeKhmerInput(t.khmerName))
+              .filter(Boolean)
+              .join(' | ') || 'គ្មាន'}
+          </span>
+        </div>
+      </div>
+
       {/* Title & Overview Banner */}
       <div className="bg-gradient-to-r from-amber-950/40 via-slate-900 to-indigo-950/40 rounded-xl p-5 border border-amber-500/30">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pb-3 border-b border-slate-800">
@@ -134,21 +172,23 @@ export const EntityBibleView: React.FC<EntityBibleViewProps> = ({
               {analysis.translationGenre && (
                 <span className="px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-[11px] font-semibold font-khmer">
                   {analysis.translationGenre === 'anime'
-                    ? '⚡ លក្ខណៈ៖ អេននីមេ (កម្រិត អេស, អេ, ប៊ី, ស៊ី)'
+                    ? '⚡ លក្ខណៈ៖ អេននីមេ • កម្រិត អេស អេ ប៊ី ស៊ី'
                     : analysis.translationGenre === 'donghua'
-                    ? '🔥 លក្ខណៈ៖ ដុងហួរ (ការដាំដុះ & ក្បាច់គុន)'
-                    : '🎬 លក្ខណៈ៖ ភាពយន្ត (សំឡេងសន្ទនារស់រវើក)'}
+                    ? '🔥 លក្ខណៈ៖ ដុងហួរ • ការដាំដុះ និងក្បាច់គុន'
+                    : '🎬 លក្ខណៈ៖ ភាពយន្ត • សំឡេងសន្ទនារស់រវើក'}
                 </span>
               )}
               <span className="text-xs text-slate-400 font-mono">
-                {totalChars.toLocaleString()} តួអក្សរ ({totalPages} ទំព័រ)
+                {totalChars.toLocaleString()} តួអក្សរ • {totalPages} ទំព័រ
               </span>
             </div>
             <h2 className="text-xl sm:text-2xl font-bold text-amber-300 font-khmer mt-1">
-              {analysis.khmerTitle || 'ចំណងជើងសាច់រឿង'}
+              {(analysis.khmerTitle || 'ចំណងជើងសាច់រឿង').replace(/[()（）]/g, '')}
             </h2>
             {analysis.originalTitle && (
-              <p className="text-xs text-slate-400 font-sans italic">{analysis.originalTitle}</p>
+              <p className="text-xs text-slate-400 font-sans italic">
+                {analysis.originalTitle.replace(/[()（）]/g, '')}
+              </p>
             )}
           </div>
 
@@ -163,7 +203,7 @@ export const EntityBibleView: React.FC<EntityBibleViewProps> = ({
               onClick={onProceedToTranslate}
               className="px-4 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs font-khmer flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 transition-all"
             >
-              <span>ចាប់ផ្តើមបកប្រែពីទំព័រទី ១ (សរុប {totalPages} ទំព័រ)</span>
+              <span>ចាប់ផ្តើមបកប្រែពីទំព័រទី ១ • សរុប {totalPages} ទំព័រ</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -173,19 +213,21 @@ export const EntityBibleView: React.FC<EntityBibleViewProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3 text-xs">
           <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/80">
             <span className="font-semibold text-slate-300 font-khmer block mb-1">
-              📖 បរិបទសាច់រឿងសង្ខេប (Context Blueprint):
+              📖 បរិបទសាច់រឿងសង្ខេប៖
             </span>
             <p className="text-slate-300 font-khmer leading-relaxed">
-              {analysis.storyOverview || 'គ្មានការពិពណ៌នា'}
+              {(analysis.storyOverview || 'គ្មានការពិពណ៌នា').replace(/[()（）]/g, '')}
             </p>
           </div>
           <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/80">
             <span className="font-semibold text-amber-400 font-khmer block mb-1">
-              ✨ ក្បួនសព្វនាម & រចនាបថ (Pronoun & Register Guidelines):
+              ✨ ក្បួនសព្វនាម និងរចនាបថ៖
             </span>
             <p className="text-slate-300 font-khmer leading-relaxed">
-              {analysis.pronounGuidelines ||
-                'ប្រើពាក្យសព្វនាមខ្មែរគួរសម ពិរោះ រលូន សមស្របតាមវ័យ និងឋានន្តរសក្តិរបស់តួអង្គ។'}
+              {(
+                analysis.pronounGuidelines ||
+                'ប្រើពាក្យសព្វនាមខ្មែរគួរសម ពិរោះ រលូន សមស្របតាមវ័យ និងឋានន្តរសក្តិរបស់តួអង្គ។'
+              ).replace(/[()（）]/g, '')}
             </p>
           </div>
         </div>
@@ -203,7 +245,7 @@ export const EntityBibleView: React.FC<EntityBibleViewProps> = ({
             }`}
           >
             <Users className="w-3.5 h-3.5" />
-            <span>ឈ្មោះតួអង្គ ({analysis.characters.length})</span>
+            <span>តួអង្គ៖ {analysis.characters.length}</span>
           </button>
 
           <button
@@ -215,7 +257,7 @@ export const EntityBibleView: React.FC<EntityBibleViewProps> = ({
             }`}
           >
             <MapPin className="w-3.5 h-3.5" />
-            <span>ទីតាំង ({analysis.locations.length})</span>
+            <span>ទីកន្លែង/និកាយ៖ {analysis.locations.length}</span>
           </button>
 
           <button
@@ -227,7 +269,7 @@ export const EntityBibleView: React.FC<EntityBibleViewProps> = ({
             }`}
           >
             <Shield className="w-3.5 h-3.5" />
-            <span>វត្ថុ & ពាក្យគន្លឹះ ({analysis.terms.length})</span>
+            <span>វត្ថុ/ថាមពល/កម្រិត៖ {analysis.terms.length}</span>
           </button>
         </div>
 
@@ -252,7 +294,6 @@ export const EntityBibleView: React.FC<EntityBibleViewProps> = ({
             </button>
           </div>
 
-          {/* Add Character Form */}
           {isAddingChar && (
             <div className="p-3 bg-slate-950 rounded-xl border border-amber-500/40 grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
               <input
@@ -293,7 +334,6 @@ export const EntityBibleView: React.FC<EntityBibleViewProps> = ({
             </div>
           )}
 
-          {/* Character Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {analysis.characters.map((char, index) => (
               <div
@@ -546,7 +586,7 @@ export const EntityBibleView: React.FC<EntityBibleViewProps> = ({
         <div className="flex items-center gap-2 text-xs text-emerald-400 font-khmer">
           <Check className="w-4 h-4" />
           <span>
-            បញ្ជីចងចាំឈ្មោះតួអង្គរួចរាល់ ({analysis.characters.length} តួអង្គ, {analysis.locations.length} ទីតាំង, {analysis.terms.length} វត្ថុ)
+            បញ្ជីចងចាំឈ្មោះតួអង្គរួចរាល់ • {analysis.characters.length} តួអង្គ • {analysis.locations.length} ទីកន្លែង/និកាយ • {analysis.terms.length} វត្ថុ/ថាមពល/កម្រិត
           </span>
         </div>
 

@@ -19,7 +19,7 @@ import {
   FileText,
   Navigation,
 } from 'lucide-react';
-import { SrtCue, buildSrt } from '../utils/srtParser';
+import { SrtCue, buildSrt, formatCuesAsBracketedSingleParagraph } from '../utils/srtParser';
 import { toKhmerNumerals } from '../utils/khmerCleaner';
 import { hasNonKhmerWords } from '../utils/nonKhmerDetector';
 
@@ -44,7 +44,6 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
   isFullScreenMode = false,
   onToggleFullScreen,
 }) => {
-  // Pagination & Filtering state
   const [pageSize, setPageSize] = useState<number>(50);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [jumpCueInput, setJumpCueInput] = useState<string>('');
@@ -53,14 +52,26 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
   const [copiedCueId, setCopiedCueId] = useState<number | null>(null);
   const [copiedAllSrt, setCopiedAllSrt] = useState<boolean>(false);
   const [highlightedCueId, setHighlightedCueId] = useState<number | null>(null);
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
 
   const cueCardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const showNotice = (msg: string) => {
+    setStatusNotice(msg);
+    setTimeout(() => setStatusNotice(null), 2500);
+  };
+
   // Statistics
   const totalCues = cues.length;
   const translatedCount = useMemo(
-    () => cues.filter((c) => c.translatedText && c.translatedText.trim().length > 0).length,
+    () =>
+      cues.filter(
+        (c) =>
+          c.translatedText &&
+          c.translatedText.trim().length > 0 &&
+          /[\p{L}\p{M}0-9០-៩]/u.test(c.translatedText)
+      ).length,
     [cues]
   );
   const pendingCount = totalCues - translatedCount;
@@ -75,9 +86,19 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
     let result = cues;
 
     if (filterMode === 'translated') {
-      result = result.filter((c) => c.translatedText && c.translatedText.trim().length > 0);
+      result = result.filter(
+        (c) =>
+          c.translatedText &&
+          c.translatedText.trim().length > 0 &&
+          /[\p{L}\p{M}0-9០-៩]/u.test(c.translatedText)
+      );
     } else if (filterMode === 'untranslated') {
-      result = result.filter((c) => !c.translatedText || c.translatedText.trim().length === 0);
+      result = result.filter(
+        (c) =>
+          !c.translatedText ||
+          c.translatedText.trim().length === 0 ||
+          !/[\p{L}\p{M}0-9០-៩]/u.test(c.translatedText)
+      );
     } else if (filterMode === 'non_khmer') {
       result = result.filter((c) => c.translatedText && hasNonKhmerWords(c.translatedText));
     }
@@ -96,32 +117,26 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
     return result;
   }, [cues, filterMode, searchQuery]);
 
-  // Total pages
   const totalPages = Math.max(1, Math.ceil(filteredCues.length / pageSize));
 
-  // Current page cues
   const pagedCues = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return filteredCues.slice(start, start + pageSize);
   }, [filteredCues, currentPage, pageSize]);
 
-  // Adjust current page if filter shrinks total pages
   useEffect(() => {
     if (currentPage > totalPages) {
       setCurrentPage(totalPages);
     }
   }, [totalPages, currentPage]);
 
-  // Jump to cue function
   const handleJumpToCue = (targetIdStr?: string) => {
     const val = targetIdStr !== undefined ? targetIdStr : jumpCueInput;
     const targetId = parseInt(val.trim(), 10);
     if (isNaN(targetId) || targetId <= 0) return;
 
-    // Find the index of this cue in filteredCues
     const cueIndex = filteredCues.findIndex((c) => c.id === targetId);
     if (cueIndex === -1) {
-      // If not in current filtered list, check if it exists in all cues
       const existsInAll = cues.some((c) => c.id === targetId);
       if (existsInAll && filterMode !== 'all') {
         setFilterMode('all');
@@ -129,7 +144,7 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
         setTimeout(() => handleJumpToCue(targetId.toString()), 50);
         return;
       }
-      alert(`រកមិនឃើញជួរ SRT លេខ #${targetId} ឡើយ`);
+      showNotice(`រកមិនឃើញជួរ SRT លេខ #${targetId} ឡើយ`);
       return;
     }
 
@@ -145,13 +160,12 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
     }, 150);
   };
 
-  // Jump to next untranslated cue
   const handleJumpToNextUntranslated = () => {
     const firstUntranslated = cues.find(
       (c) => !c.translatedText || c.translatedText.trim().length === 0
     );
     if (!firstUntranslated) {
-      alert('បានបកប្រែគ្រប់ជួរ SRT ទាំងអស់រួចរាល់ហើយ!');
+      showNotice('បានបកប្រែគ្រប់ជួរ SRT ទាំងអស់រួចរាល់ហើយ!');
       return;
     }
     if (filterMode === 'translated') {
@@ -160,7 +174,6 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
     handleJumpToCue(firstUntranslated.id.toString());
   };
 
-  // Copy single cue in SRT format
   const handleCopySingleCue = (cue: SrtCue) => {
     const srtBlock = `${cue.id}\n${cue.timecode}\n${(cue.translatedText || cue.originalText).trim()}`;
     navigator.clipboard.writeText(srtBlock);
@@ -168,7 +181,6 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
     setTimeout(() => setCopiedCueId(null), 1500);
   };
 
-  // Copy all translated SRT
   const handleCopyAllSrt = () => {
     const fullSrt = buildSrt(cues, true);
     if (!fullSrt) return;
@@ -177,7 +189,6 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
     setTimeout(() => setCopiedAllSrt(false), 2000);
   };
 
-  // Download translated SRT
   const handleDownloadTranslatedSrt = () => {
     const srtContent = buildSrt(cues, true);
     if (!srtContent) return;
@@ -192,40 +203,20 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  // Download original SRT
-  const handleDownloadOriginalSrt = () => {
-    const srtContent = buildSrt(cues, false);
-    if (!srtContent) return;
-    const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${(movieTitle || 'subtitle').replace(/\s+/g, '_')}_Original.srt`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
-  // Download pure translated dialogue as text
   const handleDownloadPureKhmerText = () => {
-    const pureKhmer = cues
-      .map((c) => (c.translatedText || '').trim())
-      .filter((t) => t.length > 0)
-      .join('\n\n');
+    const pureKhmer = formatCuesAsBracketedSingleParagraph(cues);
     if (!pureKhmer) return;
     const blob = new Blob([pureKhmer], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${(movieTitle || 'subtitle').replace(/\s+/g, '_')}_អត្ថបទខ្មែរសុទ្ធ.txt`;
+    link.download = `${(movieTitle || 'subtitle').replace(/[()（）\s]+/g, '_')}_អត្ថបទខ្មែរសុទ្ធ.txt`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
 
-  // Active cue index within range for current display
   const startCueIndex = (currentPage - 1) * pageSize + 1;
   const endCueIndex = Math.min(currentPage * pageSize, filteredCues.length);
 
@@ -236,10 +227,9 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
         isFullScreenMode ? 'fixed inset-0 z-50 rounded-none border-none' : 'w-full my-4'
       }`}
     >
-      {/* 1. Header: Movie Title & Cue Counter Status (ទម្រង់ចំណងជើងរឿង SRT) */}
+      {/* 1. Header */}
       <div className="bg-gradient-to-r from-slate-950 via-sky-950/70 to-slate-950 p-4 sm:p-5 border-b border-sky-800/60 flex flex-col gap-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          {/* Title & Counter Badge */}
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2.5">
               <span className="p-2 rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/30">
@@ -259,7 +249,6 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
             </div>
           </div>
 
-          {/* Quick Actions (Export & Fullscreen) */}
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleDownloadTranslatedSrt}
@@ -317,7 +306,7 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
           </div>
         </div>
 
-        {/* Progress Bar & Subtitle Integrity Badges */}
+        {/* Progress Bar */}
         <div className="space-y-2">
           <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-slate-800">
             <div
@@ -354,6 +343,12 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
                   </span>
                 </span>
               )}
+
+              {statusNotice && (
+                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-khmer">
+                  {statusNotice}
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -365,9 +360,8 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
         </div>
       </div>
 
-      {/* 2. Controls Bar: Jump to Cue (ផ្លោះទៅជួរ #171), Page Navigation, Filter & Search */}
+      {/* 2. Controls Bar */}
       <div className="bg-slate-900/90 p-3 sm:p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-        {/* Left: Jump to Cue Input & Quick Untranslated */}
         <div className="flex flex-wrap items-center gap-2.5">
           <form
             onSubmit={(e) => {
@@ -408,7 +402,6 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
             </button>
           )}
 
-          {/* Filter Pills */}
           <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
             <button
               onClick={() => setFilterMode('all')}
@@ -454,9 +447,7 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
           </div>
         </div>
 
-        {/* Right: Search & Pagination Controls */}
         <div className="flex flex-wrap items-center gap-3">
-          {/* Search Input */}
           <div className="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1.5 rounded-xl border border-slate-800 text-slate-300">
             <Search className="w-3.5 h-3.5 text-slate-500" />
             <input
@@ -479,7 +470,6 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
             )}
           </div>
 
-          {/* Page Size Dropdown */}
           <div className="flex items-center gap-1 text-slate-400 font-khmer">
             <span>ជួរ/ទំព័រ៖</span>
             <select
@@ -497,7 +487,6 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
             </select>
           </div>
 
-          {/* Pagination Navigation */}
           <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
             <button
               onClick={() => setCurrentPage(1)}
@@ -555,7 +544,7 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
         </div>
       </div>
 
-      {/* 3. Main List: Side-by-Side Cards (មួយចំហៀងម្នាក់) */}
+      {/* 3. Main List */}
       <div className="p-3 sm:p-5 overflow-y-auto max-h-[75vh] space-y-4 scrollbar-thin scrollbar-thumb-sky-500/30 scrollbar-track-slate-900">
         {pagedCues.length === 0 ? (
           <div className="p-12 text-center text-slate-400 font-khmer space-y-2">
@@ -594,7 +583,6 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
                     : 'border-slate-800/60 bg-slate-950/40 opacity-75'
                 }`}
               >
-                {/* Card Cue Bar: Index, Timecode, Status, Actions */}
                 <div className="px-4 py-2.5 bg-slate-950/90 border-b border-slate-800/80 rounded-t-xl flex flex-wrap items-center justify-between gap-2 text-xs">
                   <div className="flex items-center gap-2">
                     <span
@@ -646,9 +634,7 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
                   </div>
                 </div>
 
-                {/* Split 2-Column Grid: Original Dialogue (Left) vs Translated Khmer Dialogue (Right) */}
                 <div className="p-3 sm:p-4 grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
-                  {/* Left Column: Original Dialogue */}
                   <div className="bg-slate-950/80 p-3.5 rounded-xl border border-slate-800 flex flex-col justify-between">
                     <div>
                       <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-slate-800/60">
@@ -665,7 +651,6 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
                     </div>
                   </div>
 
-                  {/* Right Column: Translated Khmer Dialogue (Directly Editable) */}
                   <div
                     className={`p-3.5 rounded-xl border flex flex-col justify-between transition-all ${
                       hasKhmer
@@ -717,7 +702,7 @@ export const SrtSideBySideStudio: React.FC<SrtSideBySideStudioProps> = ({
         )}
       </div>
 
-      {/* 4. Bottom Footer with Pagination & Summary */}
+      {/* 4. Bottom Footer */}
       <div className="bg-slate-950 p-3.5 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-2">
           <span className="font-mono text-slate-400">

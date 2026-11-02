@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   FileText,
   Upload,
@@ -13,9 +13,14 @@ import {
   PlayCircle,
   FileCode,
   ListFilter,
-  Check,
+  Cpu,
 } from 'lucide-react';
-import { TranslationStyle } from '../types';
+import {
+  TranslationStyle,
+  AiModelId,
+  AI_MODEL_OPTIONS,
+  AiConnectionStatus,
+} from '../types';
 import {
   isSrtContent,
   parseSrt,
@@ -25,6 +30,7 @@ import {
   buildSrt,
 } from '../utils/srtParser';
 import { toKhmerNumerals } from '../utils/khmerCleaner';
+import { countWords } from '../utils/chunker';
 
 interface StoryInputProps {
   inputText: string;
@@ -33,6 +39,11 @@ interface StoryInputProps {
   setSourceLang: (lang: 'auto' | 'en' | 'hi') => void;
   translationStyle: TranslationStyle;
   setTranslationStyle: (style: TranslationStyle) => void;
+  preferredAiModel?: AiModelId;
+  setPreferredAiModel?: (model: AiModelId) => void;
+  aiConnectionStatus?: AiConnectionStatus | null;
+  isCheckingAiConnection?: boolean;
+  onTestAiConnection?: (modelId: AiModelId) => void;
   targetCharsPerPage: number;
   setTargetCharsPerPage: (size: number) => void;
   onStartAnalysis: () => void;
@@ -81,6 +92,11 @@ export const StoryInput: React.FC<StoryInputProps> = ({
   setSourceLang,
   translationStyle,
   setTranslationStyle,
+  preferredAiModel = 'gemini-8-flash',
+  setPreferredAiModel,
+  aiConnectionStatus = null,
+  isCheckingAiConnection = false,
+  onTestAiConnection,
   targetCharsPerPage,
   setTargetCharsPerPage,
   onStartAnalysis,
@@ -100,24 +116,23 @@ export const StoryInput: React.FC<StoryInputProps> = ({
   const srtInputRef = useRef<HTMLInputElement>(null);
 
   const charCount = inputText.length;
-  const wordCount = inputText.trim() ? inputText.trim().split(/\s+/).length : 0;
+  const wordCount = useMemo(() => countWords(inputText), [inputText]);
   const estimatedPages = Math.max(1, Math.ceil(charCount / targetCharsPerPage));
   const estimatedReadMins = Math.ceil(wordCount / 200);
 
   // Effective cues: prioritize allSrtCues prop, fallback to parsing if inputText contains raw SRT
-  const activeCues: SrtCue[] =
-    allSrtCues.length > 0
-      ? allSrtCues
-      : isSrtContent(inputText)
-      ? parseSrt(inputText)
-      : [];
+  const activeCues: SrtCue[] = useMemo(() => {
+    if (allSrtCues.length > 0) return allSrtCues;
+    if (isSrtContent(inputText)) return parseSrt(inputText);
+    return [];
+  }, [allSrtCues, inputText]);
 
   const showNotification = (msg: string) => {
     setNotificationMsg(msg);
-    setTimeout(() => setNotificationMsg(null), 3500);
+    setTimeout(() => setNotificationMsg(null), 4000);
   };
 
-  // Handle file uploads: for SRT files, extract ONLY pure text into input box & store cues!
+  // Handle file uploads: extracts clean text from SRT while saving cues for translation
   const handleFileUpload = (file: File, forceSrt: boolean = false) => {
     if (!file) return;
     const isSrtFile = forceSrt || file.name.toLowerCase().endsWith('.srt');
@@ -135,7 +150,9 @@ export const StoryInput: React.FC<StoryInputProps> = ({
           if (setIsSrtMode) setIsSrtMode(true);
           setSrtViewMode('pure_text');
           showNotification(
-            `✓ បានស្រង់អត្ថបទសុទ្ធ ${toKhmerNumerals(cues.length)} ជួរពីឯកសារ SRT ចូលក្នុងប្រអប់រួចរាល់!`
+            `✓ បានស្រង់អត្ថបទសុទ្ធ ${toKhmerNumerals(
+              cues.length
+            )} ជួរចេញពីឯកសារ SRT ចូលក្នុងប្រអប់! (ពេលវេលា Timecodes ត្រូវបានរក្សាទុកសម្រាប់បកប្រែ)`
           );
           return;
         }
@@ -167,19 +184,20 @@ export const StoryInput: React.FC<StoryInputProps> = ({
   };
 
   const handleClearText = () => {
-    if (!inputText) return;
+    if (!inputText && allSrtCues.length === 0) return;
     setInputText('');
     if (setAllSrtCues) setAllSrtCues([]);
   };
 
-  // Load sample SRT: Extract clean text into input box & set cues!
   const handleLoadSampleSrt = () => {
     const { cues, cleanText } = parseSrtAndExtractCleanText(SAMPLE_SRT_TEXT);
     setInputText(cleanText);
     if (setAllSrtCues) setAllSrtCues(cues);
     if (setIsSrtMode) setIsSrtMode(true);
     setSrtViewMode('pure_text');
-    showNotification(`⚡ បានស្រង់អត្ថបទសុទ្ធ ${toKhmerNumerals(cues.length)} ជួរពីគំរូ SRT ចូលក្នុងប្រអប់!`);
+    showNotification(
+      `⚡ បានស្រង់អត្ថបទសុទ្ធ ${toKhmerNumerals(cues.length)} ជួរពីគំរូ SRT ចូលក្នុងប្រអប់!`
+    );
   };
 
   const handleLoadSampleNovel = () => {
@@ -188,7 +206,7 @@ export const StoryInput: React.FC<StoryInputProps> = ({
     if (setAllSrtCues) setAllSrtCues([]);
   };
 
-  // Textarea change handler: auto-detects pasted raw SRT and extracts pure text
+  // Textarea change handler: auto-detects pasted raw SRT and extracts clean text
   const handleTextareaChange = (newVal: string) => {
     if (isSrtContent(newVal)) {
       const { cues, cleanText } = parseSrtAndExtractCleanText(newVal);
@@ -198,17 +216,22 @@ export const StoryInput: React.FC<StoryInputProps> = ({
         if (setIsSrtMode) setIsSrtMode(true);
         setSrtViewMode('pure_text');
         showNotification(
-          `✓ បានស្រង់អត្ថបទសុទ្ធ ${toKhmerNumerals(cues.length)} ជួរពីកូដ SRT ដែលបានបិទភ្ជាប់!`
+          `✓ បានស្រង់អត្ថបទសុទ្ធ ${toKhmerNumerals(
+            cues.length
+          )} ជួរចេញពីកូដ SRT ចូលក្នុងប្រអប់ដោយស្វ័យប្រវត្តិ!`
         );
         return;
       }
     }
 
     setInputText(newVal);
-    // If in SRT mode and cues exist, keep cue text synchronized
-    if (isSrtMode && allSrtCues && allSrtCues.length > 0 && setAllSrtCues) {
-      const synced = syncCuesWithTextLines(allSrtCues, newVal);
-      setAllSrtCues(synced);
+    if (allSrtCues && allSrtCues.length > 0 && setAllSrtCues) {
+      if (!newVal.trim()) {
+        setAllSrtCues([]);
+      } else {
+        const synced = syncCuesWithTextLines(allSrtCues, newVal);
+        setAllSrtCues(synced);
+      }
     }
   };
 
@@ -301,7 +324,7 @@ export const StoryInput: React.FC<StoryInputProps> = ({
                 )}
               </div>
               <p className="text-xs text-slate-400 font-khmer mt-1 leading-relaxed">
-                បិទភ្ជាប់អត្ថបទវែងរហូតដល់ ៣៥០,០០០+ តួអក្សរ។ ប្រព័ន្ធបែងចែកទំព័រស្វ័យប្រវត្ត (&lt;= ៥០,០០០ តួ/ទំព័រ) និងចងចាំឈ្មោះតួអង្គ។
+                គាំទ្រអត្ថបទវែងរហូតដល់ ១០,០០០,០០០+ (១០ លាន+ តួអក្សរ)។ បែងចែកទំព័រស្វ័យប្រវត្តិ (&lt;= ៥០,០០០ តួ/ទំព័រ) មិនឱ្យបរាជ័យឡើយ។
               </p>
             </div>
           </button>
@@ -461,6 +484,161 @@ export const StoryInput: React.FC<StoryInputProps> = ({
         </div>
       </div>
 
+      {/* Exclusive Google Gemini 8 Flash High Thinking Level Configuration (លុបប្រព័ន្ធបម្រុងចេញទាំងអស់ • ប្រើតែ Gemini 8 Flash កម្រិតគិតខ្ពស់) */}
+      <div className="p-4 sm:p-5 rounded-xl bg-gradient-to-r from-emerald-950/60 via-slate-950 to-sky-950/60 border-2 border-emerald-500/60 space-y-3.5 shadow-xl">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Cpu className="w-5 h-5 text-emerald-400 shrink-0" />
+            <span className="text-xs sm:text-sm font-bold text-emerald-300 font-khmer">
+              ប្រព័ន្ធបកប្រែផ្តាច់មុខ៖ Google Gemini 8 Flash • កម្រិតគិតខ្ពស់ • លុបប្រព័ន្ធបម្រុងចេញទាំងអស់ ១០០%
+            </span>
+          </div>
+          <span className="text-[11px] px-3 py-1 rounded-full bg-emerald-500 text-slate-950 font-khmer font-bold shadow">
+            ⚡ Gemini 8 Flash • កម្រិតគិតខ្ពស់ • គ្មានប្រព័ន្ធបម្រុង • ប្ដូរ Chat ថ្មីរាល់ទំព័រ
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2.5">
+          {AI_MODEL_OPTIONS.map((opt) => {
+            const isSelected = preferredAiModel === opt.id;
+            const isConnectedActive = Boolean(aiConnectionStatus?.connected);
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setPreferredAiModel && setPreferredAiModel(opt.id)}
+                className="p-4 rounded-xl border-2 text-left transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-emerald-500/15 border-emerald-400 ring-2 ring-emerald-400/40 shadow-lg shadow-emerald-950/40"
+                title={opt.description}
+              >
+                <div className="space-y-1.5 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-bold font-khmer text-emerald-200">
+                      {opt.name}
+                    </span>
+                    {isSelected && (
+                      <span className="text-[10.5px] px-2.5 py-0.5 rounded-full bg-emerald-400 text-slate-950 font-khmer font-bold">
+                        ប្រព័ន្ធផ្តាច់មុខតែមួយគត់
+                      </span>
+                    )}
+                    <span className="text-[10.5px] px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-khmer font-bold">
+                      🧠 កម្រិតគិតខ្ពស់ HIGH THINKING
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-200 font-khmer leading-relaxed">
+                    {opt.description}
+                  </p>
+                </div>
+
+                <div className="text-xs font-mono text-slate-200 bg-slate-950/90 px-3.5 py-2.5 rounded-xl border border-emerald-500/40 space-y-1 shrink-0">
+                  <div>
+                    <span className="text-slate-400">AI:</span>{' '}
+                    <span className="text-amber-300 font-bold">Google Gemini 8 Flash</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Model:</span>{' '}
+                    <span className="text-sky-300 font-bold">{opt.modelCode}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-emerald-300 font-khmer font-bold pt-0.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                    <span>{isConnectedActive ? 'ភ្ជាប់ផ្ទាល់រួចរាល់ ១០០%' : 'ត្រៀមភ្ជាប់ផ្ទាល់'}</span>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* LIVE AI & MODEL CONNECTION VERIFICATION BANNER */}
+        <div
+          data-testid="ai-connection-banner"
+          className={`p-3.5 rounded-xl border transition-all ${
+            isCheckingAiConnection
+              ? 'bg-amber-950/40 border-amber-500/50'
+              : aiConnectionStatus?.connected
+              ? 'bg-emerald-950/50 border-emerald-500/60 shadow-lg shadow-emerald-950/30'
+              : 'bg-slate-900/90 border-slate-800'
+          }`}
+        >
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="space-y-1.5 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                {isCheckingAiConnection ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500 text-slate-950 text-xs font-bold font-khmer">
+                    <span className="w-2 h-2 rounded-full bg-slate-950 animate-ping" />
+                    កំពុងតភ្ជាប់ទៅប្រព័ន្ធ Gemini 8 Flash កម្រិតគិតខ្ពស់...
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-400 text-slate-950 text-xs font-bold font-khmer">
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    ភ្ជាប់បានសម្រេច ១០០% • គ្មានប្រព័ន្ធបម្រុង
+                  </span>
+                )}
+
+                <span className="text-xs font-bold text-slate-200 font-khmer">
+                  ប្រព័ន្ធដែលកំពុងដំណើរការ៖{' '}
+                  <strong className="text-amber-300">
+                    Google Gemini 8 Flash • កម្រិតគិតខ្ពស់ • ប្ដូរ Chat ថ្មីរាល់ទំព័រ
+                  </strong>
+                </span>
+
+                {aiConnectionStatus?.latencyMs !== undefined && !isCheckingAiConnection && (
+                  <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-950 text-emerald-300 border border-emerald-500/30">
+                    ⚡ ល្បឿនឆ្លើយតប៖ {aiConnectionStatus.latencyMs} ms
+                  </span>
+                )}
+              </div>
+
+              {/* Explicit AI System & Model ID that connected */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                <div className="p-2 rounded-lg bg-slate-950/90 border border-emerald-500/30 text-xs font-khmer">
+                  <span className="text-slate-400">🤖 ប្រព័ន្ធ AI៖ </span>
+                  <strong className="text-emerald-300 font-mono">
+                    {aiConnectionStatus?.connectedAiSystem ||
+                      'Google Gemini 8 Flash • កម្រិតគិតខ្ពស់'}
+                  </strong>
+                </div>
+                <div className="p-2 rounded-lg bg-slate-950/90 border border-sky-500/30 text-xs font-khmer">
+                  <span className="text-slate-400">🧬 លេខកូដ Model៖ </span>
+                  <strong className="text-sky-300 font-mono">
+                    {aiConnectionStatus?.connectedModelId || 'gemini-8-flash'}
+                  </strong>
+                </div>
+                <div className="p-2 rounded-lg bg-slate-950/90 border border-amber-500/30 text-xs font-khmer">
+                  <span className="text-slate-400">🧠 កម្រិតគិត៖ </span>
+                  <strong className="text-amber-300 font-mono">
+                    កម្រិតគិតខ្ពស់ HIGH • គ្មានប្រព័ន្ធបម្រុង
+                  </strong>
+                </div>
+              </div>
+
+              {aiConnectionStatus?.statusMessage && (
+                <p className="text-xs text-emerald-200 font-khmer pt-0.5 leading-relaxed">
+                  {aiConnectionStatus.statusMessage}
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-row lg:flex-col items-center lg:items-end justify-between gap-2 shrink-0">
+              {onTestAiConnection && (
+                <button
+                  type="button"
+                  onClick={() => onTestAiConnection('gemini-8-flash')}
+                  disabled={isCheckingAiConnection}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-khmer font-bold transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {isCheckingAiConnection
+                    ? 'កំពុងពិនិត្យការភ្ជាប់...'
+                    : '🔄 ពិនិត្យការភ្ជាប់ Gemini 8 Flash ម្ដងទៀត'}
+                </button>
+              )}
+              <span className="text-[10.5px] text-amber-300 font-khmer bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-500/20">
+                📖 អក្ខរាវិរុទ្ធវចនានុក្រមសម្ដេចជួនណាត
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Notification Toast Banner */}
       {notificationMsg && (
         <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-950 via-slate-900 to-sky-950 border border-emerald-500/50 shadow-lg flex items-center justify-between gap-3 animate-fade-in text-xs font-khmer">
@@ -489,15 +667,15 @@ export const StoryInput: React.FC<StoryInputProps> = ({
               </div>
               <div>
                 <h3 className="font-bold text-base text-sky-200 font-khmer flex items-center gap-2">
-                  <span>ប្រអប់ផ្ទុក និងបកប្រែឯកសារ SRT (SRT Subtitle Station)</span>
+                  <span>ប្រអប់បកប្រែឯកសារចំណងជើងរឿង SRT (SRT Subtitle Translation)</span>
                   {activeCues.length > 0 && (
                     <span className="text-xs px-2.5 py-0.5 rounded-full bg-sky-400 text-slate-950 font-bold font-mono">
                       {toKhmerNumerals(activeCues.length)} ជួរ
                     </span>
                   )}
                 </h3>
-                <p className="text-xs text-slate-400 font-khmer mt-0.5">
-                  ស្រង់យកតែអត្ថបទសុទ្ធមកតម្រៀបក្នុងប្រអប់ដើម្បីបកប្រែ និងតម្រៀបជា SRT តាមពេលវេលាដើមវិញ ១០០%
+                <p className="text-xs text-slate-300 font-khmer mt-0.5">
+                  ពេលដាក់ឯកសារ <strong className="text-sky-300">.srt</strong> ចូល ប្រព័ន្ធនឹងស្រង់អត្ថបទដើមដើម្បីបកប្រែជាភាសាខ្មែរសុទ្ធ ១០០% ដោយប្រើ <strong className="text-emerald-300">Gemini 8 Flash (ប្ដូរ Chat ថ្មីរាល់ទំព័រ)</strong>!
                 </p>
               </div>
             </div>
@@ -528,18 +706,18 @@ export const StoryInput: React.FC<StoryInputProps> = ({
               <button
                 type="button"
                 onClick={() => srtInputRef.current?.click()}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-khmer text-xs transition-all"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold font-khmer text-xs transition-all shadow"
               >
-                <Upload className="w-3.5 h-3.5 text-sky-400" />
-                <span>ផ្ទុកឯកសារ .srt ថ្មី</span>
+                <Upload className="w-3.5 h-3.5" />
+                <span>📂 ជ្រើសរើសឯកសារ .srt</span>
               </button>
 
-              {inputText && (
+              {(inputText || activeCues.length > 0) && (
                 <button
                   type="button"
                   onClick={handleClearText}
                   className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-900 text-rose-300 hover:text-white border border-rose-800 text-xs font-khmer transition-all"
-                  title="លុបទិន្នន័យ SRT"
+                  title="លុបទិន្នន័យ SRT និងអត្ថបទទាំងអស់"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>លុបទាំងអស់</span>
@@ -569,17 +747,14 @@ export const StoryInput: React.FC<StoryInputProps> = ({
                   <h4 className="text-sm sm:text-base font-bold text-sky-200 font-khmer">
                     ចុចទីនេះដើម្បីជ្រើសរើសឯកសារ SRT (.srt) ឬអូសទម្លាក់ឯកសារមកទីនេះ
                   </h4>
-                  <p className="text-xs text-slate-400 font-khmer mt-1">
-                    ប្រព័ន្ធនឹងស្រង់យកតែអត្ថបទសុទ្ធមកតម្រៀបក្នុងប្រអប់ដើម្បីត្រៀមបកប្រែ និងរក្សាពេលវេលាដើម ១០០%
+                  <p className="text-xs text-slate-300 font-khmer mt-1">
+                    ប្រព័ន្ធនឹងស្រង់អត្ថបទសុទ្ធចូលក្នុងប្រអប់ និងរក្សាម៉ោង Timecodes ដើម្បីបកប្រែជាភាសាខ្មែរសុទ្ធ ១០០%!
                   </p>
                 </div>
-                <div className="pt-1 flex flex-wrap items-center justify-center gap-2">
-                  <span className="px-3.5 py-1.5 rounded-xl bg-sky-500 text-slate-950 font-bold font-khmer text-xs shadow-md shadow-sky-500/30 flex items-center gap-1.5">
+                <div className="pt-1">
+                  <span className="px-4 py-2 rounded-xl bg-sky-500 text-slate-950 font-bold font-khmer text-xs shadow-md shadow-sky-500/30 inline-flex items-center gap-1.5">
                     <Film className="w-3.5 h-3.5" />
                     <span>ជ្រើសរើសឯកសារ .srt ពីឧបករណ៍</span>
-                  </span>
-                  <span className="text-xs text-slate-400 font-khmer">
-                    ឬចុច «⚡ ដាក់គំរូ SRT សាកល្បង» ខាងលើ
                   </span>
                 </div>
               </div>
@@ -587,25 +762,30 @@ export const StoryInput: React.FC<StoryInputProps> = ({
           )}
 
           {/* When Cues are loaded: Tab selector & Workstation views */}
-          {activeCues.length > 0 && (
+          {(activeCues.length > 0 || inputText.trim().length > 0) && (
             <div className="space-y-3">
               {/* Cue Stats Bar & View Mode Switcher */}
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs bg-slate-950/80 p-3 rounded-xl border border-sky-500/30">
-                <div className="flex items-center gap-3">
-                  <span className="text-sky-300 font-khmer font-bold flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-emerald-300 font-khmer font-bold flex items-center gap-1.5">
                     <CheckCircle className="w-4 h-4 text-emerald-400" />
                     <span>
-                      បានស្រង់អត្ថបទសុទ្ធ៖ <strong>{toKhmerNumerals(activeCues.length)} ជួរ</strong>
+                      បានផ្ទុកចំណងជើងរឿង SRT៖{' '}
+                      <strong>{toKhmerNumerals(activeCues.length)} ជួរ</strong>
                     </span>
                   </span>
-                  <span className="text-slate-500">•</span>
-                  <span className="text-slate-400 font-mono text-[11px]">
-                    ⏱️ {activeCues[0].startTime} ➜ {activeCues[activeCues.length - 1].endTime}
-                  </span>
+                  {activeCues.length > 0 && (
+                    <>
+                      <span className="text-slate-500">•</span>
+                      <span className="text-slate-400 font-mono text-[11px]">
+                        ⏱️ {activeCues[0].startTime} ➜ {activeCues[activeCues.length - 1].endTime}
+                      </span>
+                    </>
+                  )}
                 </div>
 
                 {/* 3 View Mode Tabs */}
-                <div className="inline-flex rounded-lg bg-slate-900 p-0.5 border border-slate-800 text-[11.5px]">
+                <div className="inline-flex flex-wrap rounded-lg bg-slate-900 p-0.5 border border-slate-800 text-[11.5px]">
                   <button
                     type="button"
                     onClick={() => setSrtViewMode('pure_text')}
@@ -628,64 +808,55 @@ export const StoryInput: React.FC<StoryInputProps> = ({
                     }`}
                   >
                     <ListFilter className="w-3.5 h-3.5" />
-                    <span>⏱️ តារាងកូដម៉ោង SRT ({toKhmerNumerals(activeCues.length)})</span>
+                    <span>⏱️ តារាងម៉ោង SRT ({toKhmerNumerals(activeCues.length)})</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setSrtViewMode('raw')}
                     className={`px-3 py-1.5 rounded-md font-khmer transition-all flex items-center gap-1.5 ${
                       srtViewMode === 'raw'
-                        ? 'bg-sky-500 text-slate-950 font-bold shadow'
+                        ? 'bg-emerald-500 text-slate-950 font-bold shadow'
                         : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
                     <FileCode className="w-3.5 h-3.5" />
-                    <span>📄 កូដ SRT ដើម</span>
+                    <span>📄 កូដ .SRT ដើម</span>
                   </button>
                 </div>
               </div>
 
-              {/* View 1: PURE TEXT IN INPUT BOX (User's primary request) */}
+              {/* View 1: PURE TEXT IN INPUT BOX */}
               {srtViewMode === 'pure_text' && (
-                <div className="space-y-2">
-                  <div className="p-2.5 rounded-xl bg-sky-950/40 border border-sky-500/30 text-xs text-sky-200 font-khmer flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>
-                      <strong>អត្ថបទសុទ្ធត្រូវបានស្រង់ចូលប្រអប់រួចរាល់៖</strong> អត្ថបទនេះត្រូវបានតម្រៀបតាមជួរ字幕។ ពេលបកប្រែ ប្រព័ន្ធនឹងបញ្ជូនអត្ថបទសុទ្ធនេះទៅបកប្រែ ហើយតម្រៀបចូលក្នុង SRT វិញដោយស្វ័យប្រវត្ត ១០០% តាមពេលវេលាដើម!
-                    </span>
-                  </div>
-
-                  <div className="relative">
-                    <textarea
-                      value={inputText}
-                      onChange={(e) => handleTextareaChange(e.target.value)}
-                      placeholder="អត្ថបទសុទ្ធដែលស្រង់ចេញពី SRT នឹងបង្ហាញនៅទីនេះ..."
-                      className="w-full h-80 bg-slate-950 border border-sky-500/50 rounded-xl p-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-400/50 font-sans leading-relaxed resize-y scrollbar-thin scrollbar-thumb-sky-500/30"
-                    />
-                    <div className="absolute bottom-3 right-3 text-[11px] font-mono text-sky-400 bg-slate-900/90 px-2.5 py-1 rounded-lg border border-sky-500/30 pointer-events-none">
-                      {inputText.split('\n').filter(Boolean).length} ជួរអត្ថបទ
-                    </div>
+                <div className="relative">
+                  <textarea
+                    value={inputText}
+                    onChange={(e) => handleTextareaChange(e.target.value)}
+                    placeholder="អត្ថបទសុទ្ធដែលបានស្រង់ចេញពី SRT នឹងបង្ហាញនៅទីនេះសម្រាប់បកប្រែ..."
+                    className="w-full h-80 bg-slate-950 border border-sky-500/50 rounded-xl p-4 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-400/50 font-khmer leading-relaxed resize-y scrollbar-thin scrollbar-thumb-sky-500/30"
+                  />
+                  <div className="absolute bottom-3 right-3 text-[11px] font-mono text-sky-400 bg-slate-900/90 px-2.5 py-1 rounded-lg border border-sky-500/30 pointer-events-none">
+                    {activeCues.length} ជួរ SRT
                   </div>
                 </div>
               )}
 
               {/* View 2: Cues Table List */}
               {srtViewMode === 'cues' && (
-                <div className="max-h-80 overflow-y-auto space-y-2 pr-1 scrollbar-thin scrollbar-thumb-sky-500/30 scrollbar-track-slate-900 bg-slate-950/90 p-3 rounded-xl border border-sky-500/30">
-                  {activeCues.map((cue) => (
+                <div className="max-h-96 overflow-y-auto space-y-2 pr-1 scrollbar-thin scrollbar-thumb-sky-500/30 scrollbar-track-slate-900 bg-slate-950/90 p-3 rounded-xl border border-sky-500/30">
+                  {activeCues.map((cue, idx) => (
                     <div
-                      key={cue.id}
-                      className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 hover:border-sky-500/40 transition-colors"
+                      key={cue.id || idx}
+                      className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 text-xs space-y-1.5 hover:border-sky-500/40 transition-colors"
                     >
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-2">
                         <span className="font-mono font-bold text-sky-400 bg-sky-950 px-2 py-0.5 rounded text-[11px] border border-sky-800/60">
-                          #{cue.id}
+                          #{idx + 1}
                         </span>
-                        <span className="font-mono text-slate-400 text-[11px]">
+                        <span className="font-mono text-amber-300 text-[11px] font-semibold">
                           {cue.timecode}
                         </span>
                       </div>
-                      <div className="text-slate-200 font-sans text-xs flex-1 sm:text-right">
+                      <div className="text-slate-200 font-sans text-xs sm:text-sm bg-slate-950/80 px-3 py-2 rounded-lg border border-slate-800">
                         {cue.originalText}
                       </div>
                     </div>
@@ -698,35 +869,72 @@ export const StoryInput: React.FC<StoryInputProps> = ({
                 <textarea
                   readOnly
                   value={buildSrt(activeCues, false)}
-                  className="w-full h-80 bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs font-mono text-slate-300 focus:outline-none focus:ring-1 focus:ring-sky-500 scrollbar-thin scrollbar-thumb-sky-500/30 leading-relaxed"
+                  className="w-full h-96 bg-slate-950 border border-sky-500/40 rounded-xl p-4 text-xs sm:text-sm font-mono text-sky-200 focus:outline-none scrollbar-thin scrollbar-thumb-sky-500/30 leading-relaxed"
                 />
               )}
             </div>
           )}
 
-          {/* Quick Translate Buttons for SRT Mode */}
-          {activeCues.length > 0 && onDirectTranslate && (
-            <div className="pt-2 flex flex-col sm:flex-row items-center gap-3">
+          {/* Action Buttons for SRT Mode: Translate with Gemini 8 Flash */}
+          <div className="pt-2 flex flex-col sm:flex-row items-center gap-3">
+            {onDirectTranslate && (
               <button
                 type="button"
-                onClick={onDirectTranslate}
-                className="w-full sm:flex-1 py-3.5 px-6 rounded-xl font-khmer font-bold text-sm bg-gradient-to-r from-sky-400 to-indigo-500 hover:from-sky-300 hover:to-indigo-400 text-slate-950 shadow-lg shadow-sky-500/25 flex items-center justify-center gap-2 transition-all active:scale-[0.99]"
-              >
-                <Sparkles className="w-4 h-4 text-slate-950" />
-                <span>🚀 ចាប់ផ្តើមបកប្រែ SRT នេះភ្លាមៗ (Start SRT Translation)</span>
-                <ArrowRight className="w-4 h-4 text-slate-950" />
-              </button>
-
-              <button
-                type="button"
-                onClick={onStartAnalysis}
+                data-testid="srt-direct-translate-btn"
+                onClick={() => {
+                  if (activeCues.length === 0 && !inputText.trim()) {
+                    showNotification(
+                      '⚠️ សូមជ្រើសរើសឯកសារ .srt ឬចុចប៊ូតុង "⚡ ដាក់គំរូ SRT សាកល្បង" ជាមុនសិន!'
+                    );
+                    return;
+                  }
+                  onDirectTranslate();
+                }}
                 disabled={isAnalyzing}
-                className="w-full sm:w-auto py-3.5 px-5 rounded-xl font-khmer text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all flex items-center justify-center gap-1.5"
+                className="w-full sm:flex-1 py-3.5 px-6 rounded-xl font-khmer font-bold text-sm bg-gradient-to-r from-sky-400 to-indigo-500 hover:from-sky-300 hover:to-indigo-400 text-slate-950 shadow-lg shadow-sky-500/25 flex items-center justify-center gap-2 transition-all active:scale-[0.99] disabled:opacity-60 cursor-pointer"
               >
-                <span>🔍 វិភាគសាច់រឿង & ស្រង់តួអង្គជាមុន</span>
+                {isAnalyzing ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin shrink-0" />
+                    <span>កំពុងរៀបចំការបកប្រែ SRT...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 text-slate-950 shrink-0" />
+                    <span>
+                      🚀 ចាប់ផ្តើមបកប្រែចំណងជើងរឿង SRT ឥឡូវនេះ (Gemini 8 Flash • ប្ដូរ Chat ថ្មីរាល់ទំព័រ)
+                    </span>
+                    <ArrowRight className="w-4 h-4 text-slate-950 shrink-0" />
+                  </>
+                )}
               </button>
-            </div>
-          )}
+            )}
+
+            <button
+              type="button"
+              data-testid="srt-analyze-btn"
+              onClick={() => {
+                if (activeCues.length === 0 && !inputText.trim()) {
+                  showNotification(
+                    '⚠️ សូមជ្រើសរើសឯកសារ .srt ឬចុចប៊ូតុង "⚡ ដាក់គំរូ SRT សាកល្បង" ជាមុនសិន!'
+                  );
+                  return;
+                }
+                onStartAnalysis();
+              }}
+              disabled={isAnalyzing}
+              className="w-full sm:w-auto py-3.5 px-5 rounded-xl font-khmer text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer"
+            >
+              {isAnalyzing ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                  <span className="text-amber-300">កំពុងវិភាគសាច់រឿង & ស្រង់តួអង្គ...</span>
+                </>
+              ) : (
+                <span>🔍 វិភាគសាច់រឿង & ស្រង់តួអង្គជាមុន</span>
+              )}
+            </button>
+          </div>
         </div>
       )}
 
@@ -736,11 +944,11 @@ export const StoryInput: React.FC<StoryInputProps> = ({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <label className="text-xs text-slate-300 font-khmer font-semibold flex items-center gap-1.5">
               <FileText className="w-3.5 h-3.5 text-amber-400" />
-              <span>ប្រអប់បញ្ចូលអត្ថបទប្រលោមលោក (Input Story / Novel Text):</span>
+              <span>ប្រអប់បញ្ចូលអត្ថបទសាច់រឿង (បកប្រែជាភាសាខ្មែរសុទ្ធ ១០០% ដោយប្រើ Gemini 8 Flash • ប្ដូរ Chat ថ្មីរាល់ទំព័រ):</span>
             </label>
 
             {/* Quick Demo & Clear Buttons */}
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={handleLoadSampleNovel}
@@ -768,7 +976,7 @@ export const StoryInput: React.FC<StoryInputProps> = ({
                 className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all font-khmer text-xs"
               >
                 <Upload className="w-3.5 h-3.5 text-amber-400" />
-                <span>ផ្ទុកឯកសារ (.txt / .srt)</span>
+                <span>ផ្ទុកឯកសារ (.srt / .txt)</span>
               </button>
 
               {inputText && (
@@ -789,36 +997,71 @@ export const StoryInput: React.FC<StoryInputProps> = ({
             <textarea
               value={inputText}
               onChange={(e) => handleTextareaChange(e.target.value)}
-              placeholder="ចម្លង ឬបិទភ្ជាប់សាច់រឿងនៅទីនេះ... ឬចុច «⚡ ដាក់គំរូសាកល្បង» ឬចុច «ផ្ទុកឯកសារ»..."
-              className="w-full h-80 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500/60 font-sans leading-relaxed resize-y scrollbar-thin scrollbar-thumb-amber-500/30"
+              placeholder="បិទភ្ជាប់អត្ថបទសាច់រឿង (English / Hindi / ចិន / បរទេស) នៅទីនេះដើម្បីបកប្រែជាភាសាខ្មែរសុទ្ធ ១០០%..."
+              className="w-full h-80 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500/60 font-khmer leading-relaxed resize-y scrollbar-thin scrollbar-thumb-amber-500/30"
             />
           </div>
 
           {/* Action buttons for Novel Mode */}
-          {inputText.trim().length > 0 && (
-            <div className="pt-1 flex flex-col sm:flex-row items-center gap-3">
-              {onDirectTranslate && (
-                <button
-                  type="button"
-                  onClick={onDirectTranslate}
-                  className="w-full sm:flex-1 py-3.5 px-6 rounded-xl font-khmer font-bold text-sm bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition-all active:scale-[0.99]"
-                >
-                  <Sparkles className="w-4 h-4 text-slate-950" />
-                  <span>🚀 ចាប់ផ្តើមបកប្រែភ្លាមៗ (Start Direct Translation)</span>
-                  <ArrowRight className="w-4 h-4 text-slate-950" />
-                </button>
-              )}
-
+          <div className="pt-1 flex flex-col sm:flex-row items-center gap-3">
+            {onDirectTranslate && (
               <button
                 type="button"
-                onClick={onStartAnalysis}
+                data-testid="novel-direct-translate-btn"
+                onClick={() => {
+                  if (!inputText.trim() && activeCues.length === 0) {
+                    showNotification(
+                      '⚠️ សូមបញ្ចូលអត្ថបទសាច់រឿង ឬចុចប៊ូតុង "⚡ ដាក់គំរូសាកល្បង" ជាមុនសិន!'
+                    );
+                    return;
+                  }
+                  onDirectTranslate();
+                }}
                 disabled={isAnalyzing}
-                className="w-full sm:w-auto py-3.5 px-5 rounded-xl font-khmer text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all flex items-center justify-center gap-1.5"
+                className="w-full sm:flex-1 py-3.5 px-6 rounded-xl font-khmer font-bold text-sm bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition-all active:scale-[0.99] disabled:opacity-60 cursor-pointer"
               >
-                <span>🔍 វិភាគសាច់រឿង & ស្រង់តួអង្គជាមុន</span>
+                {isAnalyzing ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin shrink-0" />
+                    <span>កំពុងរៀបចំការបកប្រែ...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 text-slate-950 shrink-0" />
+                    <span>
+                      🚀 ចាប់ផ្តើមបកប្រែចំណងជើងរឿង SRT ឥឡូវនេះ (Gemini 8 Flash • ប្ដូរ Chat ថ្មីរាល់ទំព័រ)
+                    </span>
+                    <ArrowRight className="w-4 h-4 text-slate-950 shrink-0" />
+                  </>
+                )}
               </button>
-            </div>
-          )}
+            )}
+
+            <button
+              type="button"
+              data-testid="novel-analyze-btn"
+              onClick={() => {
+                if (!inputText.trim() && activeCues.length === 0) {
+                  showNotification(
+                    '⚠️ សូមបញ្ចូលអត្ថបទសាច់រឿង ឬចុចប៊ូតុង "⚡ ដាក់គំរូសាកល្បង" ជាមុនសិន!'
+                  );
+                  return;
+                }
+                onStartAnalysis();
+              }}
+              disabled={isAnalyzing}
+              className="w-full sm:w-auto py-3.5 px-5 rounded-xl font-khmer text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer"
+            >
+              {isAnalyzing ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                  <span className="text-amber-300">កំពុងវិភាគសាច់រឿង & ស្រង់តួអង្គ...</span>
+                </>
+              ) : (
+                <span>🔍 វិភាគសាច់រឿង & ស្រង់តួអង្គជាមុន</span>
+              )}
+            </button>
+          </div>
         </div>
       )}
 
@@ -832,7 +1075,7 @@ export const StoryInput: React.FC<StoryInputProps> = ({
             <div className="text-[11px] text-slate-400 font-khmer">ចំនួនតួអក្សរសរុប</div>
             <div className="text-base font-bold font-mono text-slate-100">
               {charCount.toLocaleString()}{' '}
-              <span className="text-[10px] text-slate-500 font-normal">/ ៣៥០,០០០+</span>
+              <span className="text-[10px] text-amber-400/90 font-khmer font-normal">/ ១០ លាន+ តួ</span>
             </div>
           </div>
         </div>

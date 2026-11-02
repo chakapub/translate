@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Sparkles, BookOpen, Layers, Users, Zap, CheckCircle2 } from 'lucide-react';
+import { X, Sparkles, BookOpen, Users, Wand2 } from 'lucide-react';
 
 interface HelpModalProps {
   isOpen: boolean;
@@ -23,7 +23,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
                 របៀបប្រើប្រាស់កម្មវិធី KhmerStory Translator
               </h3>
               <p className="text-xs text-slate-400 font-khmer">
-                លក្ខណៈពិសេសចម្បងៗ និងការបកប្រែសាច់រឿងវែងរហូតដល់ ៣៥០,០០០+ តួអក្សរ
+                លក្ខណៈពិសេសចម្បងៗ និងការបកប្រែសាច់រឿងវែងរហូតដល់ ១០,០០០,០០០+ (១០លាន) តួអក្សរ
               </p>
             </div>
           </div>
@@ -79,16 +79,30 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
             </div>
           </div>
 
+          <div className="flex items-start gap-3 p-3 rounded-xl bg-slate-950 border border-emerald-500/30">
+            <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 shrink-0">
+              <Wand2 className="w-4 h-4" />
+            </div>
+            <div>
+              <h4 className="font-bold text-emerald-300 text-sm mb-1">
+                ៤. ប៊ូតុងជួសជុលអក្ខរាវិរុទ្ធខ្មែរ & ជម្រះ/បកប្រែពាក្យបរទេសដែលបកមិនអស់
+              </h4>
+              <p className="text-slate-400 leading-relaxed">
+                ចុចប៊ូតុង «ជួសជុលអក្ខរាវិរុទ្ធ & ជម្រះពាក្យបរទេសទាំងអស់» ដើម្បីកែតម្រូវអក្ខរាវិរុទ្ធខ្មែរតាមវចនានុក្រមសម្ដេចជួនណាត និងបកប្រែ ឬជម្រះចោលគ្រប់ពាក្យបរទេសដែលនៅសល់ក្នុងអត្ថបទទាំងអស់ឱ្យទៅជាភាសាខ្មែរសុទ្ធ ១០០%។
+              </p>
+            </div>
+          </div>
+
           <div className="flex items-start gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800">
             <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 shrink-0">
               <Users className="w-4 h-4" />
             </div>
             <div>
               <h4 className="font-bold text-amber-300 text-sm mb-1">
-                ៤. ពិនិត្យមើលអត្ថបទទាំងមូលជាមុន & ចងចាំឈ្មោះតួអង្គ (Entity Bible)
+                ៥. ពិនិត្យមើលអត្ថបទទាំងមូលជាមុន & ចងចាំឈ្មោះតួអង្គ (Entity Bible)
               </h4>
               <p className="text-slate-400 leading-relaxed">
-                មុននឹងបកប្រែ ប្រព័ន្ធនឹងស្កេនពិនិត្យមើលសាច់រឿងទាំងមូល ដើម្បីស្រង់ឈ្មោះតួអង្គ (Characters) ទីតាំង (Locations) និងវត្ថុ/អាវុធទេព (Artifacts) មកបង្កើតជាតារាងចងចាំ។ អ្នកអាចកែសម្រួលឈ្មោះខ្មែរតាមចិត្ត ហើយ Gemini នឹងរក្សាឈ្មោះទាំងនោះឱ្យដូចគ្នា ១០០% ពីទំព័រទី១ រហូតដល់ចប់។
+                មុននឹងបកប្រែ ប្រព័ន្ធនឹងស្កេនពិនិត្យមើលសាច់រឿងទាំងមូល ដើម្បីស្រង់ឈ្មោះតួអង្គ (Characters) ទីតាំង (Locations) និងវត្ថុ/អាវុធទេព (Artifacts) មកបង្កើតជាតារាងចងចាំ ហើយរក្សាឈ្មោះទាំងនោះឱ្យដូចគ្នា ១០០% ពីទំព័រទី១ រហូតដល់ចប់។
               </p>
             </div>
           </div>
@@ -99,10 +113,10 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
             </div>
             <div>
               <h4 className="font-bold text-emerald-300 text-sm mb-1">
-                ៥. ភាសាខ្មែរសុទ្ធ ១០០% មិនសង្ខេបន័យ & ១ ទំព័រ &lt;= ៥០,០០០ តួអក្សរ
+                ៦. គាំទ្រអត្ថបទខ្នាតយក្ស ១០,០០០,០០០+ (១០លាន) តួអក្សរ មិនចេះបរាជ័យ
               </h4>
               <p className="text-slate-400 leading-relaxed">
-                បកប្រែបែបអ្នកនិពន្ធនិទានរឿង ពិរោះ រលូន ក្បោះក្បាយ មិនសង្ខេបន័យដាច់ខាត។ គាំទ្រអត្ថបទវែងរហូតដល់ ៣៥០,០០០+ តួអក្សរ ដោយបំបែកទំព័រត្រឹមត្រូវ គ្មានការបាត់បង់ទិន្នន័យឡើយ។
+                បកប្រែបែបអ្នកនិពន្ធនិទានរឿង ពិរោះ រលូន ក្បោះក្បាយ មិនសង្ខេបន័យដាច់ខាត ជាមួយប្រព័ន្ធប្តូរម៉ាស៊ីនបម្រុងស្វ័យប្រវត្តិ។
               </p>
             </div>
           </div>

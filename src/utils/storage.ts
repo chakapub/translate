@@ -1,10 +1,10 @@
-import { StoryAnalysis, TranslationStyle } from '../types';
+import { StoryAnalysis, TranslationStyle, SourceLanguage } from '../types';
 import { PageChunk } from './chunker';
 import { SrtCue } from './srtParser';
 
 export interface SavedStoryProject {
   inputText: string;
-  sourceLang: 'auto' | 'en' | 'hi';
+  sourceLang: SourceLanguage;
   translationStyle?: TranslationStyle;
   isSrtMode?: boolean;
   rawSrtContent?: string;
@@ -23,7 +23,6 @@ const STORE_NAME = 'projects';
 const PROJECT_KEY = 'active_story_project';
 const BACKUP_LS_KEY = 'khmer_story_backup_meta';
 
-// Helper to open IndexedDB
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined' || !window.indexedDB) {
@@ -64,7 +63,6 @@ export async function saveProjectToStorage(project: SavedStoryProject): Promise<
       req.onerror = () => reject(req.error);
     });
 
-    // Also write a lightweight metadata backup in localStorage
     try {
       localStorage.setItem(
         BACKUP_LS_KEY,
@@ -75,15 +73,14 @@ export async function saveProjectToStorage(project: SavedStoryProject): Promise<
           title: project.analysis?.khmerTitle || '',
         })
       );
-    } catch (e) {
+    } catch {
       // Ignore localStorage quota
     }
-  } catch (err) {
-    console.warn('Failed to save to IndexedDB, attempting localStorage fallback:', err);
+  } catch {
     try {
       localStorage.setItem(PROJECT_KEY, JSON.stringify(project));
-    } catch (lsErr) {
-      console.error('All storage attempts failed:', lsErr);
+    } catch {
+      // Ignore fallback quota limit
     }
   }
 }
@@ -103,17 +100,16 @@ export async function loadProjectFromStorage(): Promise<SavedStoryProject | null
     });
 
     if (data) return data;
-  } catch (err) {
-    console.warn('Could not read from IndexedDB, trying localStorage:', err);
+  } catch {
+    // Fallback to localStorage
   }
 
-  // Fallback to localStorage
   try {
     const raw = localStorage.getItem(PROJECT_KEY);
     if (raw) {
       return JSON.parse(raw);
     }
-  } catch (e) {
+  } catch {
     // Ignore
   }
 
@@ -121,7 +117,7 @@ export async function loadProjectFromStorage(): Promise<SavedStoryProject | null
 }
 
 /**
- * Clear all project data from storage (only when user explicitly confirms deletion)
+ * Clear all project data from storage
  */
 export async function clearProjectFromStorage(): Promise<void> {
   try {
@@ -133,14 +129,14 @@ export async function clearProjectFromStorage(): Promise<void> {
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
     });
-  } catch (e) {
+  } catch {
     // Ignore
   }
 
   try {
     localStorage.removeItem(PROJECT_KEY);
     localStorage.removeItem(BACKUP_LS_KEY);
-  } catch (e) {
+  } catch {
     // Ignore
   }
 }
